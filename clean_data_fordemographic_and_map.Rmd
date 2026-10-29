@@ -1,0 +1,300 @@
+---
+title: "cleandata for the sample sequencing of IPNT 2019-2026"
+output: html_document
+date: "2026-10-23"
+author: thuylethiphuong
+---
+#cleandata: purpose to have clean gender, age, day of collection, day of onset, day of illness, provinces
+
+```{r}
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+
+# ------------------------------------------------------------
+# Làm sạch một vector ngày tháng lộn xộn -> Date chuẩn (YYYY-MM-DD)
+# Quy ước: ưu tiên ngày/tháng/năm (dmy) vì đây là kiểu phổ biến ở VN.
+# Giá trị nào không đọc được sẽ trả về NA (kiểm tra bằng cột flag).
+# ------------------------------------------------------------
+clean_date_col <- function(x,
+                           min_year = 1990,
+                           max_year = year(Sys.Date()) + 1,
+                           orders = c("dmy", "ymd", "dby", "dBy", "bdy", "Bdy")) {
+
+  s <- as.character(x) |> str_squish() |> str_to_lower()
+
+  # 1. Giá trị rỗng / placeholder -> NA
+  na_vals <- c("", "na", "n/a", "nan", "null", "-", "?", "unknown",
+               "không rõ", "khong ro", "kr", "chưa có", "chua co")
+  s[s %in% na_vals] <- NA_character_
+
+  # 2. Chuẩn hóa chữ tiếng Việt và dấu phân cách
+  s <- s |>
+    str_replace_all("ngày|ngay", " ") |>
+    str_replace_all("tháng|thang", "-") |>
+    str_replace_all("năm|nam", "-") |>
+    str_remove_all("\\s*\\(.*?\\)") |>          # bỏ ghi chú trong ngoặc
+    str_remove("[t ]\\d{1,2}:\\d{2}(:\\d{2})?.*$") |>  # bỏ phần giờ nếu có
+    str_replace_all("[./\\\\,\\s_-]+", "-") |>
+    str_remove_all("^-+|-+$")
+
+  out <- rep(as.Date(NA), length(s))
+  has <- !is.na(s)
+
+  # 3. Số serial của Excel (vd 45366)
+  i <- has & str_detect(s, "^\\d{5}$")
+  if (any(i)) out[i] <- as.Date(as.numeric(s[i]), origin = "1899-12-30")
+
+  # 4. Dạng liền 8 chữ số: 20240315 (ymd) hoặc 15032024 (dmy)
+  i <- has & is.na(out) & str_detect(s, "^\\d{8}$")
+  if (any(i)) {
+    is_ymd <- str_detect(s[i], "^(19|20)")
+    tmp <- as.Date(rep(NA, sum(i)))
+    tmp[is_ymd]  <- ymd(s[i][is_ymd],  quiet = TRUE)
+    tmp[!is_ymd] <- dmy(s[i][!is_ymd], quiet = TRUE)
+    out[i] <- tmp
+  }
+
+  # 5. Các dạng còn lại: thử lần lượt từng order (dmy được ưu tiên)
+  for (ord in orders) {
+    i <- has & is.na(out)
+    if (!any(i)) break
+    out[i] <- as.Date(parse_date_time(s[i], orders = ord, quiet = TRUE))
+  }
+
+  # 6. Loại các năm vô lý (vd 1900, 2099 do gõ sai)
+  bad_year <- !is.na(out) & (year(out) < min_year | year(out) > max_year)
+  out[bad_year] <- NA
+
+  out
+}
+
+```
+
+```{r}
+# ============================================================
+# ÁP DỤNG CHO FILE EXCEL df1.xlsx
+# Cột: date_of_collection, date_of_onset
+# (đặt df1.xlsx cùng thư mục làm việc, hoặc sửa đường dẫn bên dưới)
+# ============================================================
+library(readxl)
+library(writexl)
+library(janitor)
+# Đọc toàn bộ dạng text để R không tự đoán sai kiểu ngày.
+# Ô ngày thật của Excel sẽ đọc thành số serial (vd "45366") -> hàm đã xử lý.
+  df1 <- read_excel("data/pos_sample_2019_2022_full.xlsx", col_types = "text")  %>% clean_names()
+
+date_cols <- c("date_of_collection", "date_of_onset")
+
+df1_clean <- df1 |>
+  mutate(
+    across(
+      all_of(date_cols),
+      ~ clean_date_col(.x, min_year = 2015),   # đổi 2015 thành năm bắt đầu dự án
+      .names = "{.col}_clean"
+    ),
+    across(
+      all_of(paste0(date_cols, "_clean")),
+      ~ format(.x, "%m/%d/%Y"),
+      .names = "{.col}_mmddyyyy"
+    )
+  ) |>
+  mutate(
+    # Cờ kiểm tra từng cột: có giá trị gốc nhưng không đọc được
+    collection_flag = case_when(
+      is.na(date_of_collection) | str_squish(date_of_collection) == "" ~ "missing",
+      is.na(date_of_collection_clean)                                  ~ "UNPARSED",
+      TRUE                                                             ~ "ok"
+    ),
+    onset_flag = case_when(
+      is.na(date_of_onset) | str_squish(date_of_onset) == "" ~ "missing",
+      is.na(date_of_onset_clean)                             ~ "UNPARSED",
+      TRUE                                                   ~ "ok"
+    ),
+    # Khởi phát bệnh thường phải trước hoặc cùng ngày lấy mẫu
+    order_flag = case_when(
+      is.na(date_of_collection_clean) | is.na(date_of_onset_clean) ~ NA_character_,
+      date_of_onset_clean > date_of_collection_clean               ~ "onset SAU collection - kiểm tra",
+      TRUE                                                         ~ "ok"
+    ), 
+    #trường hợp type sai ngày hoặc tháng, nên date_of_collection_clean - date_of_onset_clean  >10 
+    unreal_flag= case_when(
+      is.na(date_of_collection_clean) | is.na(date_of_onset_clean) ~ NA_character_,
+      date_of_collection_clean - date_of_onset_clean  >10             ~ "unreal data",
+      TRUE                                                         ~ "ok"
+    )
+  )
+
+# Tổng hợp nhanh
+count(df1_clean, collection_flag)
+count(df1_clean, onset_flag)
+count(df1_clean, order_flag)
+count(df1_clean, unreal_flag)
+
+# Các dòng cần kiểm tra tay
+df1_check <- df1_clean |>
+  filter(collection_flag == "UNPARSED" | onset_flag == "UNPARSED" |
+           order_flag != "ok"| unreal_flag =="unreal data") |>
+  select(any_of(c("ma_so_pxn","date_of_collection", "date_of_collection_clean", "collection_flag",
+                  "date_of_onset", "date_of_onset_clean", "onset_flag", "order_flag","unreal_flag")))
+print(df1_check, n = Inf)
+
+
+# Xuất file: giữ cột gốc, thêm cột _clean (Date) và _mmddyyyy (chuỗi)
+write_xlsx(
+  list(data_clean = df1_clean, can_kiem_tra = df1_check),
+  "df1_clean.xlsx"
+)
+
+```
+
+#EXTRACT DOI
+
+```{r}
+library(readxl)
+library(writexl)
+library(janitor)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+# Đọc toàn bộ dạng text để R không tự đoán sai kiểu ngày.
+# Ô ngày thật của Excel sẽ đọc thành số serial (vd "45366") -> hàm đã xử lý.
+df2<- read_excel("data/pos_sample_2019_2022_full_CLEAN_OFFICIAL_DATASET1.xlsx")  
+head(df2)
+str(df2)
+df2_doi <- df2 %>%
+  mutate(
+    date_of_illness = as.numeric(
+      as.Date(date_of_collection_clean) -
+      as.Date(date_of_onset_clean)
+    ) + 1
+  )
+
+# Kiểm tra kết quả
+df2_doi %>%
+  select(
+    ma_so_pxn,
+    date_of_onset_clean,
+    date_of_collection_clean,
+    date_of_illness
+  ) %>%
+  head(10)
+
+df2_doi |> write_xlsx("data/pos_sample_2019_2022_full_CLEAN_OFFICIAL_DATASET1.xlsx")
+str(df2_doi)
+```
+
+
+#DATASET1 FULL list sample ipnt 2019-2022
+```{r}
+library(readxl)
+library(dplyr)
+library(openxlsx)
+#dataset 1 lấy những thông tin cần thiết 
+
+dataset1 <- read_excel("data/pos_sample_2019_2022_full_CLEAN_OFFICIAL_DATASET1.xlsx") %>%
+      select(
+        ma_so_pxn,
+        age = age_adjust,
+        province,
+        serotype = kq_dinh_typ_dengue,
+        DOI = date_of_illness, 
+        gender = gender
+      )
+
+
+# 4. Xuất Excel full data
+write.xlsx(
+  dataset1,
+  "data/pos_sample_2019_2022_full_fordemographic_offical_DATASET1.xlsx",
+  overwrite = TRUE
+)
+```
+
+#DATASET2 sample oucru recieved
+```{r}
+# 1. Đọc danh sách mẫu dataset2
+sample_list <- read_excel("data/sample_pos_2019-2022_oucrurecieved.xlsx")
+  dataset1<- read_excel("data/pos_sample_2019_2022_full_fordemographic_offical_DATASET1.xlsx")
+# 2. Trích xuất thông tin theo ma_so_pxn
+result <- sample_list %>%
+  left_join(
+    dataset1 %>%
+      select(
+        ma_so_pxn,
+        age = age,
+        province,
+        serotype,
+        DOI, 
+        gender
+      ),
+    by = "ma_so_pxn"
+  )
+
+# 3. Kiểm tra kết quả
+head(result)
+nrow(result)
+#kiểm tra những giá trị không tìm thấy 
+missing_samples <- result %>%
+  filter(
+    is.na(age) &
+    is.na(province) &
+    is.na(serotype) &
+    is.na(DOI)
+  )
+
+# 4. Xuất Excel
+write.xlsx(
+  result,
+  "data/sample_pos_2019-2022_oucrurecieved_official.xlsx",
+  overwrite = TRUE
+)
+```
+
+
+
+#extract infor sample oucru sequence sucess
+```{r}
+library(readxl)
+library(dplyr)
+library(openxlsx)
+
+# 1. Đọc danh sách mẫu dataset 3
+sample_list3 <- read_excel("data/sample_pos_2019_2022_IPNT_sequencesucess.xlsx")
+dataset2<- read_excel("data/sample_pos_2019-2022_oucrurecieved_official.xlsx")
+# 2. Trích xuất thông tin theo ma_so_pxn
+result3 <- sample_list3 %>%
+  left_join(
+    dataset2 %>%
+      select(
+        ma_so_pxn,
+        age,
+        province,
+        serotype ,
+        DOI, 
+        gender
+      ),
+    by = "ma_so_pxn"
+  )
+
+# 3. Kiểm tra kết quả
+head(result3)
+nrow(result3)
+#kiểm tra những giá trị không tìm thấy 
+missing_samples3 <- result3 %>%
+  filter(
+    is.na(age) &
+    is.na(province) &
+    is.na(serotype) &
+    is.na(DOI)
+  )
+
+# 4. Xuất Excel
+write.xlsx(
+  result3,
+  "data/sample_pos_2019_2022_IPNT_sequencesucess_official.xlsx",
+  overwrite = TRUE
+)
+```
