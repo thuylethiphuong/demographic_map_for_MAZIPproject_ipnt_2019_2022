@@ -1,0 +1,601 @@
+---
+title: "visualize on VIETNAM MAP FOR IPNT SAMPLE 2019-2022"
+output: html_document
+date: "2026-10-23"
+author: thuylethiphuong
+---
+#Library
+
+```{r}
+# ============================================================
+# 1. INSTALL AND LOAD PACKAGES
+# ============================================================
+
+# Chỉ chạy nếu chưa cài packages
+# install.packages(c("sf", "ggplot2", "dplyr", "stringi", "geodata"))
+library(readxl)
+library(sf)
+library(geodata)
+library(patchwork)
+library(forcats)
+library(ggplot2)
+library(dplyr)
+library(stringi)
+library(ggspatial)
+library(ggplot2)
+library(sf)
+library(grid)
+```
+
+#represent sample to map of 19 Vietnam provinces 
+
+```{r}
+#READ EXCEL FILE OF DATASET 3: SAMPLE IPNT WHICH OUCRU SEQUENCED SUCESS
+
+dataset3 <- read_excel("data/sample_pos_2019_2022_IPNT_sequencesucess_official.xlsx")
+
+# ============================================================
+# 2.  DOWNLOAD MAP OF VIETNAM LEVEL PROVINCES
+# ============================================================
+
+vietnam_province <- geodata::gadm(
+  country = "VNM",
+  level = 1,
+  path = tempdir()
+) %>%
+  st_as_sf()
+
+
+# ============================================================
+# 3. FUNCTION STANDARDISE PROVINCE NAME
+# ============================================================
+
+normalize_name <- function(x) {
+  x %>%
+    stringi::stri_trans_general("Latin-ASCII") %>%
+    toupper() %>%
+    gsub("[^A-Z0-9]", "", .)
+}
+
+
+# ============================================================
+# 4. COUNT PROVINCE IN DATASET
+# ============================================================
+
+province_count <- dataset3 %>%
+  filter(!is.na(province)) %>%
+  count(province, name = "n") %>%
+  mutate(
+    province_key = normalize_name(province)
+  )
+
+
+# ============================================================
+# 5. STANDARDISE NAME PROVINCE IN MAP 
+# ============================================================
+
+vietnam_province <- vietnam_province %>%
+  mutate(
+    province_key = normalize_name(NAME_1)
+  )
+
+
+# ============================================================
+# 6. MATCH DATA NUMBER OF SAMPLE AND MAP
+# ============================================================
+
+map_data <- vietnam_province %>%
+  left_join(
+    province_count,
+    by = "province_key"
+  )
+
+# ============================================================
+# 7.  Filter 19 provinces of central of VN
+#    FOLLOW THE OLD MAP (BEFORE 2025)
+# ============================================================
+
+central_provinces <- c(
+
+  # Bắc Trung Bộ (6)
+  "Thanh Hoa",
+  "Nghe An",
+  "Ha Tinh",
+  "Quang Binh",
+  "Quang Tri",
+  "Thua Thien Hue",
+
+  # Duyên hải Nam Trung Bộ (8)
+  "Da Nang",
+  "Quang Nam",
+  "Quang Ngai",
+  "Binh Dinh",
+  "Phu Yen",
+  "Khanh Hoa",
+  "Ninh Thuan",
+  "Binh Thuan",
+
+  # Tây Nguyên (5)
+  "Kon Tum",
+  "Gia Lai",
+  "Dak Lak",
+  "Dak Nong",
+  "Lam Dong"
+)
+
+# standardise name province
+central_keys <- normalize_name(central_provinces)
+
+# filter map
+map_central <- map_data %>%
+  filter(province_key %in% central_keys)
+
+
+# ============================================================
+# 8.  Visualize map central VIETNAM
+# ============================================================
+
+p_central <- ggplot() +
+
+  # Province polygons
+ geom_sf(
+  data = map_central,
+  aes(fill = n),
+  color = "grey50",
+  linewidth = 0.05
+)+
+
+  # Color scale
+  scale_fill_viridis_c(
+    option = "C",
+    na.value = "grey90",
+    name = "Number of DENV WGS"
+  ) +
+
+  # Coordinate system
+  coord_sf(
+    crs = st_crs(4326),
+    default_crs = st_crs(4326),
+    xlim = c(103.5, 110),
+    ylim = c(10.5, 22.5),
+    expand = FALSE
+  ) +
+
+  # Coordinate breaks
+  scale_x_continuous(
+    breaks = seq(104, 110, by = 2)
+  ) +
+
+  scale_y_continuous(
+    breaks = seq(12, 22, by = 2)
+  ) +
+
+  # Title and axis labels
+  labs(
+    x = "Longitude",
+    y = "Latitude",
+    title = "Central Vietnam Map- 2019-2022",
+    subtitle = "DENV Whole Genome Sequence Distribution",
+    caption = "Source: GADM | OUCRU"
+  ) +
+
+
+  # Background and theme
+  theme(
+    plot.background = element_rect(
+      fill = "#f0f0f0",
+      color = "#f0f0f0"
+    ),
+
+    panel.background = element_rect(
+      fill = "#f0f0f0",
+      color = "#f0f0f0"
+    ),
+
+    # Coordinate grid
+    panel.grid.major = element_line(
+      color = "white",
+      linewidth = 0.3,
+      linetype = "solid"
+    ),
+
+    panel.grid.minor = element_blank(),
+
+    # Border
+    panel.border = element_rect(
+      fill = NA,
+      color = "grey40",
+      linewidth = 0.6
+    ),
+
+    # Title
+    plot.title = element_text(
+      size = 15,
+      color = "grey20",
+      face = "bold"
+    ),
+
+    plot.subtitle = element_text(
+      size = 12,
+      color = "grey20",
+      face = "italic"
+    ),
+
+    plot.caption = element_text(
+      size = 7,
+      color = "grey50",
+      face = "italic"
+    ),
+
+    # Axis
+    axis.title = element_text(
+      size = 9,
+      color = "grey30"
+    ),
+
+    axis.text = element_text(
+      size = 8,
+      color = "grey30"
+    ),
+
+    # Legend
+    legend.title = element_text(
+      size = 14,
+      color = "grey30", face = "bold"
+    ),
+
+    legend.text = element_text(
+      size = 12,
+      color = "grey50"
+    ),
+
+    legend.key.height = unit(0.7, "cm"),
+    legend.key.width = unit(0.6, "cm"),
+
+    legend.background = element_rect(
+      fill = "#f0f0f0",
+      color = NA
+    )
+  )
+
+# Display map
+p_central
+
+# ============================================================
+# 9. SAVE MAP WITH 300 DPI
+# ============================================================
+
+ggsave(
+  filename = "Dataset3_Central_Vietnam_Map.png",
+  plot = p_central,
+  width = 8,
+  height = 10,
+  dpi = 300
+)
+```
+scale_fill_viridis_c( direction = -1) +
+
+# represent sample to map of 19 Vietnam provinces and bar graph for sample sequences  
+```{r}
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(patchwork)
+
+# ============================================================
+# BAR GRAPH - RANKING BY PROVINCE
+# ============================================================
+
+bar_data <- map_central %>%
+  st_drop_geometry() %>%
+  filter(!is.na(n), n > 0) %>%
+  group_by(NAME_1) %>%
+  summarise(
+    n = sum(n),
+    .groups = "drop"
+  ) %>%
+  arrange(n)
+
+
+p_central_bar <- ggplot(
+  bar_data,
+  aes(
+    x = n,
+    y = reorder(NAME_1, n)
+  )
+) +
+
+  # Horizontal bars
+geom_col(
+  aes(fill = n),
+  width = 0.8
+) +
+
+scale_fill_viridis_c(
+  option = "C",
+  na.value = "grey90",
+  name = "Number of samples"
+)+
+
+  # Number labels
+  geom_text(
+    aes(label = n),
+    hjust = -0.3,
+    size = 3.5,
+    color = "black"
+  ) +
+
+  # X-axis
+  scale_x_continuous(
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+
+  # Labels
+  labs(
+    x = "Number of dengue cases",
+    y = NULL,
+    title = "Number of DENV WGS"
+  ) +
+
+  # Theme
+  theme_minimal() +
+
+  theme(
+    plot.background = element_rect(
+      fill = "#f0f0f0",
+      color = NA
+    ),
+
+    panel.background = element_rect(
+      fill = "#f0f0f0",
+      color = NA
+    ),
+
+    panel.grid.major = element_line(
+      color = "grey85",
+      linewidth = 0.3
+    ),
+
+    panel.grid.minor = element_blank(),
+
+    plot.title = element_text(
+      size = 15,
+      color = "grey20",
+      face = "bold"
+    ),
+
+    axis.title.x = element_text(
+      size = 10,
+      color = "grey30"
+    ),
+
+    axis.text.x = element_text(
+      size = 8,
+      color = "grey30"
+    ),
+
+    axis.text.y = element_text(
+      size = 9,
+      color = "grey30"
+    )
+  )
+
+
+#3. Ghép bar graph vào bên cạnh bản đồ
+# ============================================================
+# COMBINE MAP + BAR GRAPH
+# ============================================================
+
+p_central_combined <- p_central +
+  p_central_bar +
+
+  plot_layout(
+    widths = c(1, 1.2)
+  )
+
+# Display
+p_central_combined
+ggsave(
+  filename = "Central_Vietnam_Map_Barplot.png",
+  plot = p_central_combined,
+  width = 15,
+  height = 10,
+  dpi = 300
+)
+```
+
+   
+    # Province labels
+geom_sf_text(
+  data = map_central %>% filter(!is.na(n), n > 0),
+  aes(
+    label = paste0(NAME_1, " (", n, ")")
+  ),
+  size = 2.5,
+  color = "black"
+) +
+
+#map SAMPLE IPNT SEQUENCED SUCESS MAP TO WHOLE VIETNAM
+
+```{r}
+# ============================================================
+# 7.  JOINING DATA AND KEEP ALL PROVINCE OF VIETNAM (GHÉP DỮ LIỆU VÀ GIỮ TOÀN BỘ TỈNH VIỆT NAM)
+# ============================================================
+
+# map_data đã được tạo ở các bước trước:
+# - vietnam_province: ranh giới tất cả tỉnh Việt Nam
+# - province_count: số mẫu của dataset3 theo tỉnh
+
+map_vietnam <- vietnam_province %>%
+  left_join(
+    province_count,
+    by = "province_key"
+  )
+
+
+# ============================================================
+# 8. VISUALISE MAP VIETNAM WITH ALL PROVINCES 
+# ============================================================
+
+# ============================================================
+# VIETNAM PROVINCE MAP - DATASET 3
+# Background + coordinate grid
+# ============================================================
+
+
+
+p_vietnam <- ggplot() +
+
+  # Province polygons
+  geom_sf(
+    data = map_vietnam,
+    aes(fill = n),
+    color = "grey50",
+    linewidth = 0.05
+  ) +
+
+  # Color scale
+  scale_fill_viridis_c(
+    option = "C",
+    na.value = "grey90",
+    name = "Number of DENV WGS"
+  ) +
+
+  # Coordinate system
+  coord_sf(
+    crs = st_crs(4326),
+    default_crs = st_crs(4326),
+    xlim = c(102, 110),
+    ylim = c(8, 24),
+    expand = FALSE
+  ) +
+
+  # Coordinate breaks
+  scale_x_continuous(
+    breaks = seq(102, 110, by = 2)
+  ) +
+
+  scale_y_continuous(
+    breaks = seq(8, 24, by = 2)
+  ) +
+
+  # Title and axis labels
+  labs(
+    x = "Longitude",
+    y = "Latitude",
+    title = "Vietnam Map - Province Level",
+    subtitle = "DENV Whole Genome Sequence Distribution",
+    caption = "Source: GADM | OUCRU"
+  ) +
+
+  # Background and theme
+  theme(
+    plot.background = element_rect(
+      fill = "#f0f0f0",
+      color = "#f0f0f0"
+    ),
+
+    panel.background = element_rect(
+      fill = "#f0f0f0",
+      color = "#f0f0f0"
+    ),
+
+    # Coordinate grid
+    panel.grid.major = element_line(
+      color = "white",
+      linewidth = 0.3,
+      linetype = "solid"
+    ),
+
+    panel.grid.minor = element_blank(),
+
+    # Border
+    panel.border = element_rect(
+      fill = NA,
+      color = "grey40",
+      linewidth = 0.6
+    ),
+
+    # Title
+    plot.title = element_text(
+      size = 15,
+      color = "grey20",
+      face = "bold"
+    ),
+
+    plot.subtitle = element_text(
+      size = 12,
+      color = "grey20",
+      face = "italic"
+    ),
+
+    plot.caption = element_text(
+      size = 7,
+      color = "grey50",
+      face = "italic"
+    ),
+
+    # Axis
+    axis.title = element_text(
+      size = 9,
+      color = "grey30"
+    ),
+
+    axis.text = element_text(
+      size = 8,
+      color = "grey30"
+    ),
+
+    # Legend
+    legend.title = element_text(
+      size = 10,
+      color = "grey30",
+      face = "bold"
+    ),
+
+    legend.text = element_text(
+      size = 9,
+      color = "grey50"
+    ),
+
+    legend.key.height = unit(0.5, "cm"),
+    legend.key.width = unit(0.4, "cm"),
+
+    legend.background = element_rect(
+      fill = "#f0f0f0",
+      color = NA
+    )
+  )
+
+# Display map
+p_vietnam
+
+
+# ============================================================
+# SAVE MAP
+# ============================================================
+
+ggsave(
+  filename = "Dataset3_Vietnam_Map.png",
+  plot = p_vietnam,
+  width = 6,
+  height = 9,
+  dpi = 300,
+  units = "in",
+  bg = "#f0f0f0"
+)
+
+
+# ============================================================
+# 9. LƯU HÌNH
+# ============================================================
+
+ggsave(
+  filename = "Dataset3_Vietnam_Map.png",
+  plot = p_vietnam,
+  width = 8,
+  height = 10,
+  dpi = 300
+)
+```
+
