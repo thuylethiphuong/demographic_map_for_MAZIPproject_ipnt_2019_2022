@@ -1,4 +1,4 @@
-# demographic_map_for_76dx_ipnt_2019_2022
+# demographic_map_for_MAZIPproject_ipnt_2019_2022
 ## clean_data_fordemographic_and_map
 this code use for clean date_of_collection and date_of_onset and create date of illness 
 ## demographic_for_3data
